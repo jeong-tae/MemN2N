@@ -1,0 +1,7 @@
+# data
+data
+*.tgz
+*.zip
+*.tar.gz
+*.pkl
+*.npy
