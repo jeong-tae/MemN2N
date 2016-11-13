@@ -15,7 +15,7 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
         
         self.sess = sess
         
-        self.basisConfig = config.basisConfig
+        # self.basisConfig = config.basisConfig
         self.dictionary = config.dictionary
         self.voca_size = config.voca_size
         self.epi_size = config.epi_size
@@ -59,9 +59,7 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
         C = tf.reduce_sum(tf.nn.embedding_lookup(self.C, data['input_episodes']), reduction_indices = 2)
     
         u = tf.reduce_sum(tf.nn.embedding_lookup(self.B, data['input_querys']), reduction_indices = 2)
-        pdb.set_trace()
         for h in xrange(self.nhops):
-            
             p = tf.reshape(tf.batch_matmul(u, M, adj_y=True), [-1, self.epi_size])
             p = tf.reshape(tf.nn.softmax(p), [-1, self.epi_size, 1])
 
