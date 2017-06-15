@@ -14,67 +14,105 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
     def __init__(self, config, sess, train, test):
         
         self.sess = sess
-        
-        # self.basisConfig = config.basisConfig
-        self.dictionary = config.dictionary
-        self.voca_size = config.voca_size
-        self.epi_size = config.epi_size
-        self.max_words = config.max_words
-        self.edim = config.edim
-
-
         self.train_story, self.train_questions, self.train_qstory = train
         self.test_story, self.test_questions, self.test_qstory = test
 
         self.batch_size = config.batch_size
         self.nhops = config.nhops
-
         self.init_std = config.init_std
-        self.max_iter = config.max_iter
+        self.max_epoch = config.max_epoch
+        self.dictionary = config.dictionary
+        self.voca_size = len(self.dictionary)
+        self.max_mem_size = min(config.max_mem_size, self.train_story.shape[1])
+        self.max_words = len(self.train_story) # we can define separated buckets for this
+        self.edim = config.edim
 
-        self.display_interval = config.display_interval
-        self.test_interval = config.test_interval
+		# self.display_interval = config.display_interval
+		# self.test_interval = config.test_interval
 
         self.g_step = tf.Variable(0)
-        self.lr = tf.train.exponential_decay(config.learning_rate, self.g_step, len(config.train_range), 0.9)
-        # self.lr_decay_op = self.lr.assign(self.lr * 0.98)
-        
-        self.train_range = config.train_range
+        self.train_range = np.array(range(self.train_questions.shape[1]))
         self.test_len = self.test_questions.shape[1]
 
-        self.input_querys = tf.placeholder(tf.int32, [self.batch_size, 1, self.max_words])
-        self.input_episodes = tf.placeholder(tf.int32, [self.batch_size, self.epi_size, self.max_words])
-        self.labels = tf.placeholder(tf.float32, [self.batch_size, self.voca_size])
-
-        self.W = tf.Variable(tf.random_normal([self.edim, self.voca_size], stddev = self.init_std))
-        self.A = tf.Variable(tf.random_normal([self.voca_size, self.edim], stddev = self.init_std))
-        self.B = tf.Variable(tf.random_normal([self.voca_size, self.edim], stddev = self.init_std))
-        self.C = tf.Variable(tf.random_normal([self.voca_size, self.edim], stddev = self.init_std))
+        self.input_querys = tf.placeholder(tf.int32, [None, 1, self.max_words])
+        self.input_episodes = tf.placeholder(tf.int32, [None, self.max_mem_size, self.max_words])
+        self.labels = tf.placeholder(tf.float32, [None, self.voca_size])
 
         self.acc = 0
+        
+    def get_variable(self, name, shape, stddev = None, scope = None, reuse = False):
+		
+		if scope:
+			pass
+		else:
+			if stddev != None and reuse == False:
+				w = tf.get_variable(name, shape, initializer = tf.truncated_normal_initializer(stddev = stddev), trainable = True)
+				return w
+			elif reuse:
+				w = tf.get_variable(name, trainable = True)
+				return w
 
     def qa_model(self, data):
         # M = Memory
-        M = tf.reduce_sum(tf.nn.embedding_lookup(self.A, data['input_episodes']), reduction_indices = 2)
-        C = tf.reduce_sum(tf.nn.embedding_lookup(self.C, data['input_episodes']), reduction_indices = 2)
-    
-        u = tf.reduce_sum(tf.nn.embedding_lookup(self.B, data['input_querys']), reduction_indices = 2)
-        for h in xrange(self.nhops):
-            p = tf.reshape(tf.batch_matmul(u, M, adj_y=True), [-1, self.epi_size])
-            p = tf.reshape(tf.nn.softmax(p), [-1, self.epi_size, 1])
+        print(" [*] Model building...")
+        emb_A = self.get_variable("A1", shape = [self.voca_size, self.edim], stddev = self.init_std)
+        emb_B = self.get_variable("B1", shape = [self.voca_size, self.edim], stddev = self.init_std)
+        emb_C = self.get_variable("C1", shape = [self.voca_size, self.edim], stddev = self.init_std)
 
-            o = tf.reduce_sum(tf.mul(C, p), reduction_indices = 1)
-            
+        mem_M = tf.reduce_sum(tf.nn.embedding_lookup(emb_A, data['input_episodes']), reduction_indices = 2)
+        mem_C = tf.reduce_sum(tf.nn.embedding_lookup(emb_C, data['input_episodes']), reduction_indices = 2)
+        if PE:
+            l_k = []
+            for j in range(1, self.max_mem_size+1):
+                # To DO: position embedding
+
+        if TE:
+            emb_T_A = self.get_variable("T_A1", shape = [self.max_mem_size, self.edim], stddev = self.init_std)
+            emb_T_C = self.get_variable("T_A1", shape = [self.max_mem_size, self.edim], stddev = self.init_std)
+            _time = tf.stack([tf.range(0, self.max_mem_size)] * self.batch_size)
+            self.T_M = tf.nn.embedding_lookup(emb_T_A, _time)
+            self.T_C = tf.nn.embedding_lookup(emb_T_C, _time)
+        
+            mem_M = tf.add(mem_M, self.T_M)
+            mem_C = tf.add(mem_C, self.T_C)
+    
+        # To Do: PAD masking
+
+        u = tf.reduce_sum(tf.nn.embedding_lookup(emb_B, data['input_querys']), reduction_indices = 2)
+        import pdb
+        pdb.set_trace()
+        for h in xrange(1, self.nhops+1):
+            p = tf.reshape(tf.matmul(u, tf.transpose(mem_M, perm = [0, 2, 1])), [-1, self.max_mem_size])
+            p = tf.reshape(tf.nn.softmax(p), [-1, self.max_mem_size, 1])
+            o = tf.reduce_sum(tf.mul(mem_C, p), reduction_indices = 1)
             o = tf.reshape(o, [-1, 1, self.edim])
             u = tf.add(o, u)
-        
-        u = tf.reshape(u, [-1, self.edim])
-        self.z = tf.matmul(u, self.W)
+    
+            if self.weight_tying == "Adj" and h < self.nhops:
+                emb_A = self.get_variable("C%d"%h)
+                emb_C = self.get_variable("C%d"%(h+1), shape = [self.voca_size, self.edim], stddev = self.init_std)
+                mem_M = tf.reduce_sum(tf.nn.embedding_lookup(emb_A, data['input_episodes']), reduction_indices = 2)
+                mem_C = tf.reduce_sum(tf.nn.embedding_lookup(emb_C, data['input_episodes']), reduction_indices = 2)
+            elif self.weight_tying == "LW":
+                if h > 1:
+                    linear_H = self.get_variable("linear_H")
+                else:
+                    linear_H = self.get_variable("linear_H", [self.edim, self.edim], stddev = self.init_std)
+                u = tf.add(tf.matmul(u, linear_H), o)
 
-        return self.z
+            if TE:
+                mem_M = tf.add(mem_M, self.T_M)
+                mem_C = tf.add(mem_C, self.T_C)
+
+        if self.weight_tying == "Adj":
+            W = tf.matrix_transpose(self.get_variable("C%d"%self.nhops))
+        else:
+            W = self.get_Variable("final_output", [self.edim, self.voca_size], stddev = self.init_std)
+
+        u = tf.reshape(u, [-1, self.edim])
+        self.logit = tf.matmul(u, self.W)
+        print(" [*] Model build done!")
             
-# Memory should consist of coef
-# ...
     def build_model(self, task_id):
         self.task_id = task_id
         print(" [*] Building Model...")
@@ -119,11 +157,11 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
         batch = self.train_range[np.random.randint(len(self.train_range), size = self.batch_size)]
         batch_querys = np.zeros( (self.batch_size, 1, self.max_words), np.int32 )
         batch_labels = np.zeros( (self.batch_size, self.voca_size), np.float32 )
-        batch_episodes = np.zeros( (self.batch_size, self.epi_size, self.max_words), np.int32 )
+        batch_episodes = np.zeros( (self.batch_size, self.max_mem_size, self.max_words), np.int32 )
 
         for b in range(self.batch_size):
             d = self.train_story[:, :(1 + self.train_questions[1, batch[b]]), self.train_questions[0, batch[b]]]
-            offset = max(0, d.shape[1] - self.epi_size)
+            offset = max(0, d.shape[1] - self.max_mem_size)
 
             batch_episodes[b, :d.shape[1], :d.shape[0]] = d[:, offset:].T
             batch_querys[b, 0, :] = self.train_qstory[:, batch[b]]
@@ -141,11 +179,11 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
         print(" [*] Test Data Processing...")
         self.test_querys = np.zeros( (self.test_len , 1, self.max_words), np.int32 )
         self.test_labels = np.zeros( (self.test_len , self.voca_size), np.float32 )
-        self.test_episodes = np.zeros( (self.test_len , self.epi_size, self.max_words), np.int32 )
+        self.test_episodes = np.zeros( (self.test_len , self.max_mem_size, self.max_words), np.int32 )
 
         for b in range(self.test_len):
             d = self.test_story[:, :(1 + self.test_questions[1, b]), self.test_questions[0, b]]
-            offset = max(0, d.shape[1] - self.epi_size)
+            offset = max(0, d.shape[1] - self.max_mem_size)
             self.test_episodes[b, :d.shape[1], :d.shape[0]] = d[:, offset:].T
             self.test_querys[b, 0, :] = self.test_qstory[:, b]
             label = self.test_questions[2, b]
