@@ -26,6 +26,9 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
         self.max_mem_size = min(config.max_mem_size, self.train_story.shape[1])
         self.max_words = len(self.train_story) # we can define separated buckets for this
         self.edim = config.edim
+        self.PE = config.PE
+        self.TE = config.TE
+        self.RN = config.RN
 
 		# self.display_interval = config.display_interval
 		# self.test_interval = config.test_interval
@@ -38,8 +41,6 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
         self.input_episodes = tf.placeholder(tf.int32, [None, self.max_mem_size, self.max_words])
         self.labels = tf.placeholder(tf.float32, [None, self.voca_size])
 
-        self.acc = 0
-        
     def get_variable(self, name, shape, stddev = None, scope = None, reuse = False):
 		
 		if scope:
@@ -52,35 +53,43 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
 				w = tf.get_variable(name, trainable = True)
 				return w
 
-    def qa_model(self, data):
+    def qa_model(self):
         # M = Memory
         print(" [*] Model building...")
         emb_A = self.get_variable("A1", shape = [self.voca_size, self.edim], stddev = self.init_std)
         emb_B = self.get_variable("B1", shape = [self.voca_size, self.edim], stddev = self.init_std)
         emb_C = self.get_variable("C1", shape = [self.voca_size, self.edim], stddev = self.init_std)
 
-        mem_M = tf.reduce_sum(tf.nn.embedding_lookup(emb_A, data['input_episodes']), reduction_indices = 2)
-        mem_C = tf.reduce_sum(tf.nn.embedding_lookup(emb_C, data['input_episodes']), reduction_indices = 2)
-        if PE:
-            l_k = []
-            for j in range(1, self.max_mem_size+1):
-                # To DO: position embedding
+        mem_M = tf.nn.embedding_lookup(emb_A, self.input_episodes)
+        mem_C = tf.nn.embedding_lookup(emb_C, self.input_episodes)
+        u = tf.nn.embedding_lookup(emb_B, self.input_querys)
+        if self.PE:
+            pos_emb = np.zeros((self.max_words, self.edim), np.float32)
+            for j in range(1, self.max_words+1):
+                for k in range(1, self.edim+1):
+                    pos_emb[j, k] = (1.-j/float(self.max_words))-(k/float(self.edim))*(1.-2*j/float(self.max_words))
 
-        if TE:
+            self.pos_emb = tf.reshape(tf.stack([pos_emd]*self.batch_size*self.max_mem_size), [self.batch_size, self.max_mem_size, self.max_words, self.edim])
+
+            mem_M = tf.multiply(mem_M, self.pos_emb)
+            mem_C = tf.multiply(mem_C, self.pos_emb)
+            u = tf.multiply(u, self.pos_emb[:, :1, :, :])
+
+        padding_mask_epi = tf.cast(tf.reshape(tf.sign(self.input_episodes), [self.batch_size, self.max_mem_size, self.max_words, 1]), tf.float32)
+        mem_M = tf.reduce_sum(tf.multiply(mem_M, padding_mask_epi), reduction_indices = 2)
+        mem_C = tf.reduce_sum(tf.multiply(mem_C, padding_mask_epi), reduction_indices = 2)
+        padding_mask_q = tf.cast(tf.reshape(tf.sign(self.input_querys), [self.batch_size, 1, self.max_words, 1]), tf.float32)
+        u = tf.reduce_sum(tf.multiply(u, padding_mask_q), reduction_indices = 2)
+
+        if self.TE:
             emb_T_A = self.get_variable("T_A1", shape = [self.max_mem_size, self.edim], stddev = self.init_std)
-            emb_T_C = self.get_variable("T_A1", shape = [self.max_mem_size, self.edim], stddev = self.init_std)
-            _time = tf.stack([tf.range(0, self.max_mem_size)] * self.batch_size)
-            self.T_M = tf.nn.embedding_lookup(emb_T_A, _time)
-            self.T_C = tf.nn.embedding_lookup(emb_T_C, _time)
-        
-            mem_M = tf.add(mem_M, self.T_M)
-            mem_C = tf.add(mem_C, self.T_C)
-    
-        # To Do: PAD masking
+            emb_T_C = self.get_variable("T_C1", shape = [self.max_mem_size, self.edim], stddev = self.init_std)
+            self._time = tf.stack([tf.range(0, self.max_mem_size)] * self.batch_size)
+            T_M = tf.nn.embedding_lookup(emb_T_A, self._time)
+            T_C = tf.nn.embedding_lookup(emb_T_C, self._time)
+            mem_M = tf.add(mem_M, T_M)
+            mem_C = tf.add(mem_C, T_C)
 
-        u = tf.reduce_sum(tf.nn.embedding_lookup(emb_B, data['input_querys']), reduction_indices = 2)
-        import pdb
-        pdb.set_trace()
         for h in xrange(1, self.nhops+1):
             p = tf.reshape(tf.matmul(u, tf.transpose(mem_M, perm = [0, 2, 1])), [-1, self.max_mem_size])
             p = tf.reshape(tf.nn.softmax(p), [-1, self.max_mem_size, 1])
@@ -91,18 +100,32 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
             if self.weight_tying == "Adj" and h < self.nhops:
                 emb_A = self.get_variable("C%d"%h)
                 emb_C = self.get_variable("C%d"%(h+1), shape = [self.voca_size, self.edim], stddev = self.init_std)
-                mem_M = tf.reduce_sum(tf.nn.embedding_lookup(emb_A, data['input_episodes']), reduction_indices = 2)
-                mem_C = tf.reduce_sum(tf.nn.embedding_lookup(emb_C, data['input_episodes']), reduction_indices = 2)
+                mem_M = tf.nn.embedding_lookup(emb_A, self.input_episodes)
+                mem_C = (tf.nn.embedding_lookup(emb_C, self.input_episodes)
+                if self.PE:
+                    mem_M = tf.multiply(mem_M, self.pos_emb)
+                    mem_C = tf.multiply(mem_C, self.pos_emb)
+
+                mem_M = tf.reduce_sum(tf.multiply(mem_M, padding_mask_epi), reduction_indices = 2)
+                mem_C = tf.reduce_sum(tf.multiply(mem_C, padding_mask_epi), reduction_indices = 2)
+            
+                if self.TE:
+                    emb_T_A = self.get_variable("T_C%d"%h)
+                    emb_T_C = self.get_variable("T_C%d"(h+1), shape = [self.voca_size, self.edim], stddev = self.init_std)
+                    T_M = tf.nn.embedding_lookup(emb_T_A, self._time)
+                    T_C = tf.nn.embedding_lookup(emb_T_C, self._time)
+                    mem_M = tf.add(mem_M, T_M)
+                    mem_C = tf.add(mem_C, T_C)
+                
             elif self.weight_tying == "LW":
                 if h > 1:
                     linear_H = self.get_variable("linear_H")
                 else:
                     linear_H = self.get_variable("linear_H", [self.edim, self.edim], stddev = self.init_std)
                 u = tf.add(tf.matmul(u, linear_H), o)
+            else:
+                raise ValueError(" [!] Invaild weight tying type: %s", self.weight_tying)
 
-            if TE:
-                mem_M = tf.add(mem_M, self.T_M)
-                mem_C = tf.add(mem_C, self.T_C)
 
         if self.weight_tying == "Adj":
             W = tf.matrix_transpose(self.get_variable("C%d"%self.nhops))
@@ -144,7 +167,7 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
 
     def train(self):
         data = { 'input_querys': self.input_querys, 'input_episodes': self.input_episodes }
-        logits = self.qa_model(data)
+        logits = self.qa_model()
         self.train_prediction = tf.nn.softmax(logits)
         self.train_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits, self.labels))
         regularizers = tf.nn.l2_loss(self.A) + tf.nn.l2_loss(self.B) + tf.nn.l2_loss(self.C)
@@ -173,7 +196,7 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
 
     def test(self):
         data = { 'input_querys': self.test_querys, 'input_episodes': self.test_episodes }
-        self.test_prediction = tf.nn.softmax(self.qa_model(data))
+        self.test_prediction = tf.nn.softmax(self.qa_model())
 
     def test_data(self):
         print(" [*] Test Data Processing...")
