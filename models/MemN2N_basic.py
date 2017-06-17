@@ -17,6 +17,7 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
         self.train_story, self.train_questions, self.train_qstory = train
         self.test_story, self.test_questions, self.test_qstory = test
 
+        self.lr = tf.Variable(config.learning_rate, trainable = False, name = 'lr')
         self.batch_size = config.batch_size
         self.nhops = config.nhops
         self.init_std = config.init_std
@@ -33,8 +34,7 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
 		# self.display_interval = config.display_interval
 		# self.test_interval = config.test_interval
 
-        self.g_step = tf.Variable(0)
-        self.train_range = np.array(range(self.train_questions.shape[1]))
+        self.train_len = self.train_questions.shape[1]
         self.test_len = self.test_questions.shape[1]
 
         self.input_querys = tf.placeholder(tf.int32, [None, 1, self.max_words])
@@ -133,91 +133,69 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
             W = self.get_Variable("final_output", [self.edim, self.voca_size], stddev = self.init_std)
 
         u = tf.reshape(u, [-1, self.edim])
-        self.logit = tf.matmul(u, self.W)
+        self.logits = tf.matmul(u, self.W)
+        self.preds = tf.nn.softmax(self.logits)
         print(" [*] Model build done!")
+
+    def optimization(self):
+        self.loss = tf.nn.sigmoid_cross_entropy_with_logits(logits = self.logits, labels = self.labels)
+        opt = tf.train.GradientDescentOptimizer(self.lr)
+        grads = opt.compute_gradients(self.loss, tf.trainable_variables())
+        apply_grads = opt.apply_gradients(grads)
+
+        with tf.control_dependencies([grads, apply_grads]):
+            self.opt = tf.no_op()
             
-    def build_model(self, task_id):
-        self.task_id = task_id
-        print(" [*] Building Model...")
-        self.train()
-
-        self.test_data()
-        self.test()
-        print(" [*] Build Done")
-
-        tf.initialize_all_variables().run()
-        #self.saver = tf.train.Saver()
-
-    def run(self):
-
-        for epoch in xrange(self.max_iter+1):
-            # pdb.set_trace()
-            feed_dict = self.train_data()
-            _, l, step, preds, lr = self.sess.run([self.opt, self.train_loss, self.g_step, self.train_prediction, self.lr], feed_dict = feed_dict)
-            if (epoch % self.display_interval == 0):
-                acc = accuracy(preds, feed_dict.values()[2])
-                print(time.ctime() + " iter %d, train loss: %f, lr: %f, train_acc: %.1f%%" % (epoch, l, lr, acc))
-
-            if (epoch % self.test_interval == 0):
-                #self.saver.save(self.sess, '/home/jtlee/projects/NIPS/BasisMemQA/snapshots' + '/embow-model_t' + str(self.task_id), global_step=epoch)
-                self.acc = accuracy(self.test_prediction.eval(), self.test_labels)
-                print(time.ctime() + " Test accuracy: %.1f%%" % self.acc)
-        print(time.ctime() + " Test accuracy: %.1f%%" % self.acc)
-        print("Iteration terminate...")
-
     def train(self):
-        data = { 'input_querys': self.input_querys, 'input_episodes': self.input_episodes }
-        logits = self.qa_model()
-        self.train_prediction = tf.nn.softmax(logits)
-        self.train_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits, self.labels))
-        regularizers = tf.nn.l2_loss(self.A) + tf.nn.l2_loss(self.B) + tf.nn.l2_loss(self.C)
-        
-        self.train_loss += 5e-4 * regularizers
+        self.optimization()
+        self.sess.run(tf.initialize_all_variables())
 
-        self.opt = tf.train.GradientDescentOptimizer(self.lr).minimize(self.train_loss, global_step = self.g_step)
+        dgen = data_iteration(desc = "train")
 
-    def train_data(self):
-        batch = self.train_range[np.random.randint(len(self.train_range), size = self.batch_size)]
-        batch_querys = np.zeros( (self.batch_size, 1, self.max_words), np.int32 )
-        batch_labels = np.zeros( (self.batch_size, self.voca_size), np.float32 )
-        batch_episodes = np.zeros( (self.batch_size, self.max_mem_size, self.max_words), np.int32 )
+        iter_per_epoch = self.train_len / self.batch_size
+        loss, acc = 0, 0
+        pbar1 = trange(self.max_epoch)
+        for epoch in pbar1:
+            pbar1.set_description('Overall epoch')
+            if (epoch+1) == self.lr_anneal:
+                self.lr.assign(self.lr * 0.5).eval()
+            for step in tqdm(range(iter_per_epoch), desc = 'Current epoch'):
+                querys, episodes, labels = dgen.next()
+                loss, 
 
-        for b in range(self.batch_size):
-            d = self.train_story[:, :(1 + self.train_questions[1, batch[b]]), self.train_questions[0, batch[b]]]
-            offset = max(0, d.shape[1] - self.max_mem_size)
 
-            batch_episodes[b, :d.shape[1], :d.shape[0]] = d[:, offset:].T
-            batch_querys[b, 0, :] = self.train_qstory[:, batch[b]]
-            label = self.train_questions[2, batch[b]]   
-            batch_labels[b, :] = bow(self.dictionary, np.array([label]))
-
-        feed_dict = { self.input_querys: batch_querys, self.input_episodes: batch_episodes, self.labels: batch_labels }
-        return feed_dict
 
     def test(self):
-        data = { 'input_querys': self.test_querys, 'input_episodes': self.test_episodes }
-        self.test_prediction = tf.nn.softmax(self.qa_model())
 
-    def test_data(self):
-        print(" [*] Test Data Processing...")
-        self.test_querys = np.zeros( (self.test_len , 1, self.max_words), np.int32 )
-        self.test_labels = np.zeros( (self.test_len , self.voca_size), np.float32 )
-        self.test_episodes = np.zeros( (self.test_len , self.max_mem_size, self.max_words), np.int32 )
+    def data_iteration(self, desc = 'Train'):
+        step = 0
+        while True:
+            querys = np.zeros((self.batch_size, 1, self.max_words), np.int32)
+            episodes = np.zeros((self.batch_size, self.max_mem_size, self.max_words), np.int32)
+            labels = np.zeros((self.batch_size, self.voca_size), np.float32)
 
-        for b in range(self.test_len):
-            d = self.test_story[:, :(1 + self.test_questions[1, b]), self.test_questions[0, b]]
-            offset = max(0, d.shape[1] - self.max_mem_size)
-            self.test_episodes[b, :d.shape[1], :d.shape[0]] = d[:, offset:].T
-            self.test_querys[b, 0, :] = self.test_qstory[:, b]
-            label = self.test_questions[2, b]
-            self.test_labels[b, :] = bow(self.dictionary, np.array([label]))
-        
-        self.test_querys = tf.constant(self.test_querys)
-        self.test_episodes = tf.constant(self.test_episodes)
-        
-        print(" [*] Test Data Processing Done")
+            batch_idxs = np.zeros((self.batch_size), np.int32)
+            if desc.lower() == "train":
+                batch_idxs = np.arange(self.train_len)[np.random.randint(self.train_len), size = self.batch_size]
+                data_story = self.train_story
+                data_qstory = self.train_qstory
+                data_questions = self.train_questions
+            else:
+                batch_offset = (step * self.batch_size) % self.test_len
+                if batch_offset < self.batch_size:
+                    batch_idxs[:self.batch_size - batch_offset] = np.arange((step-1) * self.batch_size, self.test_len)
+                    batch_idxs[self.batch_size - batch_offset:] = np.arange(batch_offset)
+                else:
+                    batch_idxs = np.arange(batch_offset, batch_offset + self.batch_size)
+                data_story = self.test_story
+                data_qstory = self.test_qstory
+                data_questions = self.test_questions
 
-    def writeResult(self, path):
-        fout = open(path, 'a')
-        fout.write("task " + str(self.task_id) + ", accuracy: " + str(self.acc) + "\n")
-        fout.close()
+            for b in range(batch_idxs):
+                d = data_story[:, :(1 + self.train_questions[1, b]), self.train_questions[0, b]]
+                offset = max(0, d.shape[1] - self.max_mem_size)
+                querys[b, 0, :] = data_qstory[:, b]
+                episodes[b, :d.shape[1], :d.shape[0]] = d[:, offset:].T
+                label = data_questions[2, b]
+                labels[b, :] = bow(self.dictionary, np.array([label]))
+            yield querys, episodes, labels
