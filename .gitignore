@@ -5,3 +5,6 @@ data
 *.tar.gz
 *.pkl
 *.npy
+
+# e.t.c
+*.swp
