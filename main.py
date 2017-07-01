@@ -15,11 +15,13 @@ flags.DEFINE_integer("nhops", 3, "Number of memory layers to hop")
 flags.DEFINE_float("learning_rate", 0.01, "Learning rate to train")
 flags.DEFINE_float("lr_anneal", 25, "Every epoch to anneal learning rate")
 flags.DEFINE_float("init_std", 0.1, "Standard deviation of random variable with initialization")
-flags.DEFINE_float("max_grad", 40.0, "Gradient clipping")
+flags.DEFINE_float("max_grad_norm", 40.0, "Gradient clipping")
+flags.DEFINE_boolean("is_test", False, "False if you want to train")
 flags.DEFINE_boolean("PE", True, "True, if you want to use position encoding, otherwise False")
 flags.DEFINE_boolean("TE", True, "True, if you want to use temporal encoding, otherwise False")
 flags.DEFINE_boolean("RN", True, "True, if you want to use random noise, otherwise False")
 flags.DEFINE_string("weight_tying", "Adj", "Adj short for Adjacent, LW short for Layer-wise")
+flags.DEFINE_string("checkpoint", "checkpoints/model.ckpt", "Path for the pre-trained model")
 
 FLAGS = flags.FLAGS
 
@@ -39,11 +41,24 @@ def run_task(data_dir, task_id):
     with tf.Session() as sess:
         model = MemN2N_QA_Basic(FLAGS, sess, (train_story, train_questions, train_qstory), (test_story, test_questions, test_qstory))
 
-        model.build_model(task_id)
-        model.run()
+        # only qa_model in this repository yet
+        model.qa_model(task_id)
+        model.optimization()
 
-        model.writeResult(learning_result)
+        model.saver = tf.train.Saver()
+        ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint)
+        if ckpt and ckpt.model_checkpoint_path:
+            model.saver.restore(model.sess, ckpt.model_checkpoint_path)
+        else:
+            print(" [!] Not found checkpoint")
 
+        sess.run(tf.global_variables_initializer())
+        if FLAGS.is_test:
+            model.test()
+        else:
+            model.train()
+    tf.reset_default_graph()
+    sess.close()
 
 def main(_):
 

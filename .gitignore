@@ -7,4 +7,5 @@ data
 *.npy
 
 # e.t.c
+checkpoints
 *.swp

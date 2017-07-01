@@ -1,12 +1,22 @@
 # MemN2N
 
-Underconstructing...
-This isn't working yet.
+This repository implement the End-to-End Memory Network[] using tensorflow. All the hyper-parameter and dataset are same as written in the paper.
+there is different, but somehow, because of ambiguous details and understanding. Also my lack of ability to reproduce.
+
+## Description
+
+This take a babi data set for train and test. You can download dataset using download.sh or here[]. This dataset is provided by facebook.
+
+## Prerequisites
+ - python 2.7
+ - tensorflow 1.1[]
+ - tqdm[]
+
+## Usage
+
+To train:
+
+    $ python main.py
 
 
-$excute
->> python main.py
-
-
-Some tasks are having a same result, but some tasks are not.
-I'll finding some error after the other tasks whick is currently working on.
+Still RN and LS isn't implemented yet. I will update very soon.
