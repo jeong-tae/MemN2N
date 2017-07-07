@@ -20,7 +20,7 @@ flags.DEFINE_boolean("is_test", False, "False if you want to train")
 flags.DEFINE_boolean("PE", True, "True, if you want to use position encoding, otherwise False")
 flags.DEFINE_boolean("TE", True, "True, if you want to use temporal encoding, otherwise False")
 flags.DEFINE_boolean("LS", True, "True, if you want to use linear start(training recommence by re-inserting a softmax layer)")
-flags.DEFINE_boolean("RN", True, "True, if you want to use random noise, otherwise False")
+flags.DEFINE_boolean("RN", False, "True, if you want to use random noise, otherwise False")
 flags.DEFINE_string("weight_tying", "Adj", "Adj short for Adjacent, LW short for Layer-wise")
 flags.DEFINE_string("checkpoint", "checkpoints/model.ckpt", "Path for the pre-trained model")
 
@@ -54,10 +54,12 @@ def run_task(data_dir, task_id):
             print(" [!] Not found checkpoint")
 
         sess.run(tf.global_variables_initializer())
+
         if FLAGS.is_test:
             model.test()
         else:
             model.train()
+
     tf.reset_default_graph()
     sess.close()
 
@@ -66,9 +68,9 @@ def main(_):
     all_tasks = True
 
     if all_tasks:
-        for t in range(20):
-            print(" [*] Task %d Learning Start" % (t+1))
-            run_task(data_dir, t+1)    
+#for t in range(20):
+#print(" [*] Task %d Learning Start" % (t+1))
+            run_task(data_dir, 2)    
 
 if __name__ == '__main__':
     tf.app.run()
