@@ -2,6 +2,7 @@
 
 This repository implement the End-to-End Memory Network[] using tensorflow. All the hyper-parameter and dataset are same as written in the paper.
 there is different, but somehow, because of ambiguous details and understanding. Also my lack of ability to reproduce.
+At present, this model almost reproduces the original.
 
 ## Description
 
@@ -19,4 +20,4 @@ To train:
     $ python main.py
 
 
-Still RN and LS isn't implemented yet. I will update very soon.
+Still RN isn't implemented yet. I will update very soon.
