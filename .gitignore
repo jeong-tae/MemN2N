@@ -9,3 +9,4 @@ data
 # e.t.c
 checkpoints
 *.swp
+*.pyc

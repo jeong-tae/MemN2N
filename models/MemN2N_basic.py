@@ -283,7 +283,7 @@ class MemN2N_QA_Basic(object): # m_i = A * x_i, version of Bow
                 data_questions = self.test_questions
 
             for idx, b in enumerate(batch_idxs):
-                d = data_story[:, :(1 + self.train_questions[1, b]), self.train_questions[0, b]]
+                d = data_story[:, :(1 + data_questions[1, b]), data_questions[0, b]]
                 offset = max(0, d.shape[1] - self.max_mem_size)
                 querys[idx, 0, :self.max_words] = data_qstory[:, b]
                 episodes[idx, :d.shape[1], :d.shape[0]] = d[:, offset:].T
